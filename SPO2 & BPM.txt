@@ -1,0 +1,134 @@
+#include <Wire.h>
+#include "MAX30105.h"
+#include "spo2_algorithm.h"
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+MAX30105 particleSensor;
+
+#define BUFFER_SIZE 20
+
+// Buffer to store red and IR values
+long redBuffer[BUFFER_SIZE];
+long irBuffer[BUFFER_SIZE];
+int bufferIndex = 0;
+
+float heartRate;
+float spo2;
+
+// WiFi credentials
+const char* ssid = "**********";
+const char* password = "**********";
+
+// ThingSpeak API settings
+const char* thingSpeakAPIKey = "**********"; // Replace with your ThingSpeak Write API Key
+const char* thingSpeakURL = "http://api.thingspeak.com/update";
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize the sensor
+  if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
+    Serial.println("MAX30102 was not found. Please check connections.");
+    while (1);
+  }
+
+  // Configure sensor settings
+  particleSensor.setup(); 
+  particleSensor.setPulseAmplitudeRed(0x0A); // Set red LED brightness
+  particleSensor.setPulseAmplitudeGreen(0); // Turn off green LED
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Connected to WiFi");
+  Serial.println("MAX30102 ready");
+}
+
+void loop() {
+  long irValue = particleSensor.getIR(); // Read IR value
+  long redValue = particleSensor.getRed(); // Read Red value
+
+  if (irValue > 50000) { // If a finger is detected
+    // Store readings in buffers
+    redBuffer[bufferIndex] = redValue;
+    irBuffer[bufferIndex] = irValue;
+    bufferIndex++;
+
+    // If the buffer is full, process the data
+    if (bufferIndex >= BUFFER_SIZE) {
+      bufferIndex = 0; // Reset buffer index
+
+      // Calculate heart rate and SpO2
+      calculateHeartRateAndSpO2(redBuffer, irBuffer);
+
+      // Send data to ThingSpeak
+      sendToThingSpeak(heartRate, spo2);
+    }
+  } else {
+    Serial.println("Please place a finger on the sensor.");
+  }
+
+  delay(100); // Delay for stability
+}
+
+void calculateHeartRateAndSpO2(long red[], long ir[]) {
+  // Find maximum and minimum values for the red and IR signals
+  long redMax = 0;
+  long redMin = 1e6;
+  long irMax = 0;
+  long irMin = 1e6;
+
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+    if (red[i] > redMax) redMax = red[i];
+    if (red[i] < redMin) redMin = red[i];
+    if (ir[i] > irMax) irMax = ir[i];
+    if (ir[i] < irMin) irMin = ir[i];
+  }
+
+  // Calculate heart rate (this is a simplified estimation)
+  heartRate = 0;
+  for (int i = 0; i < BUFFER_SIZE; i++) {
+    heartRate += red[i];
+  }
+  heartRate = (heartRate / BUFFER_SIZE) / 243;
+
+  // Calculate SpO2
+  float ratio = (float)(redMax - redMin) / (float)(irMax - irMin); // Ratio of red to IR max-min
+  spo2 = 100 - (ratio * 100); // Estimate SpO2 based on the ratio
+  spo2 = constrain(spo2, 0, 100); // Constrain to valid range
+
+  // Output the results
+  Serial.print("Heart Rate: ");
+  Serial.print(heartRate);
+  Serial.print(" bpm, ");
+  Serial.print("SpO2: ");
+  Serial.print(spo2);
+  Serial.println("%");
+}
+
+void sendToThingSpeak(float heartRate, float spo2) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = String(thingSpeakURL) + "?api_key=" + thingSpeakAPIKey + "&field1=" + String(heartRate) + "&field2=" + String(spo2);
+    
+    http.begin(url); // Specify the URL
+    int httpResponseCode = http.GET(); // Send the request
+
+    if (httpResponseCode > 0) {
+      String payload = http.getString(); // Get the response payload
+      Serial.println(httpResponseCode); // Print HTTP return code
+      Serial.println(payload); // Print response payload
+    } else {
+      Serial.print("Error on sending GET: ");
+      Serial.println(httpResponseCode);
+    }
+    
+    http.end(); // Free resources
+  } else {
+    Serial.println("WiFi not connected.");
+  }
+}

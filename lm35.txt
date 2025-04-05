@@ -1,0 +1,60 @@
+#include <WiFi.h>
+#include "ThingSpeak.h"
+
+// Replace with your network credentials
+const char* ssid = "*********";
+const char* password = "***********";
+
+// ThingSpeak settings
+unsigned long channelID = *******; // Replace with your ThingSpeak Channel ID
+const char* apiKey = "*********";       // Replace with your ThingSpeak Write API Key
+const int lm35Pin = 34;                    // Adjust this pin according to your connection
+
+WiFiClient client;
+
+void setup() {
+  // Start Serial communication
+  Serial.begin(115200);
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+
+  // Initialize ThingSpeak
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // Read the analog value from the LM35
+  int analogValue = analogRead(lm35Pin);
+
+  // Convert the analog value to voltage
+  float voltage = (analogValue / 4095.0) * 3.3; // For ESP32, 4095 is the ADC resolution for 12-bit
+  // Convert voltage to temperature (LM35 gives 10mV per degree Celsius)
+  float temperatureC = voltage * 100;
+
+  // Print temperature to Serial Monitor
+  Serial.print("Temperature: ");
+  Serial.print(temperatureC);
+  Serial.println(" °C");
+
+  // Send temperature data to ThingSpeak
+  ThingSpeak.setField(3, temperatureC); // Send temperature to Field 1
+
+  // Write to ThingSpeak
+  int statusCode = ThingSpeak.writeFields(channelID, apiKey);
+  if (statusCode == 200) {
+    Serial.println("Data sent to ThingSpeak successfully!");
+  } else {
+    Serial.print("Problem sending data. HTTP error code: ");
+    Serial.println(statusCode);
+  }
+
+  // Wait 20 seconds to comply with ThingSpeak rate limits
+  delay(15000);
+}

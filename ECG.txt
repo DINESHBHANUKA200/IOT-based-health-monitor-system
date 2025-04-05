@@ -1,0 +1,65 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+// WiFi credentials
+const char* ssid = "*********";
+const char* password = "*********";
+
+// ThingSpeak API details
+const char* server = "http://api.thingspeak.com";
+const char* apiKey = "*********";
+
+const int ecgPin = 34;  // Analog input for ECG signal
+const int loPlusPin = 13;  // Digital input for Lead-Off Detection LO+
+const int loMinusPin = 12; // Digital input for Lead-Off Detection LO-
+
+void setup() {
+  Serial.begin(115200);
+
+  // Set up Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println(" Connected!");
+
+  pinMode(loPlusPin, INPUT);
+  pinMode(loMinusPin, INPUT);
+}
+
+void loop() {
+  // Read ECG data
+  int ecgSignal = analogRead(ecgPin);
+  
+  // Lead-off detection
+  if (digitalRead(loPlusPin) == 1 || digitalRead(loMinusPin) == 1) {
+    Serial.println("Lead off detected!");
+  } else {
+    Serial.print("ECG Signal: ");
+    Serial.println(ecgSignal);
+
+    // Send data to ThingSpeak
+    if (WiFi.status() == WL_CONNECTED) {
+      HTTPClient http;
+      String url = String(server) + "/update?api_key=" + apiKey + "&field4=" + String(ecgSignal);
+      http.begin(url);
+      int httpResponseCode = http.GET();
+      
+      if (httpResponseCode > 0) {
+        Serial.print("Data sent to ThingSpeak. Response code: ");
+        Serial.println(httpResponseCode);
+      } else {
+        Serial.print("Error sending data. Response code: ");
+        Serial.println(httpResponseCode);
+      }
+
+      http.end();
+    } else {
+      Serial.println("WiFi not connected");
+    }
+  }
+
+  delay(15000); // Send data every 20 seconds (ThingSpeak limit is 15s for free accounts)
+}
